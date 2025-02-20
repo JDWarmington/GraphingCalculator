@@ -1,0 +1,744 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Jackson's Graphing Calculator</title>
+    <script src="https://cdn.jsdelivr.net/npm/mathjs@11.7.0/lib/browser/math.js"></script>
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        background: #f8f9fa;
+        font-family: sans-serif;
+      }
+
+      #graphContainer {
+        width: 100vw;
+        height: 100vh;
+        display: flex;
+        flex-direction: row;
+      }
+
+      #leftPanel {
+        width: 300px;
+        background: #ebebeb;
+        padding: 10px;
+        box-sizing: border-box;
+        border-right: 1px solid #ccc;
+        overflow-y: auto;
+        position: relative;
+      }
+
+      #homeBtn {
+        display: inline-block;
+        margin-bottom: 10px;
+        font-size: 14px;
+        cursor: pointer;
+      }
+
+      #equationList {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+
+      .equation-input {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 8px;
+        font-size: 16px;
+        height: 40px;
+      }
+
+      #sqrtBtn,
+      #areaBtn {
+        margin-top: 10px;
+        width: 100%;
+        box-sizing: border-box;
+        font-size: 16px;
+        padding: 10px 0;
+      }
+
+      #canvasContainer {
+        flex: 1;
+        position: relative;
+      }
+
+      #graphCanvas {
+        width: 100%;
+        height: 100%;
+        display: block;
+        background-color: #fff;
+        cursor: grab;
+        user-select: none;
+      }
+      #graphCanvas:active {
+        cursor: grabbing;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="graphContainer">
+      <div id="leftPanel">
+        <button id="homeBtn">&#8962; Home</button>
+        <h4>Graph Equations</h4>
+        <p style="font-size: 0.9em; margin-top: 0">Insert an Equation</p>
+        <div id="equationList"></div>
+        <button id="sqrtBtn">Insert √</button>
+        <button id="areaBtn">f'(x)</button>
+      </div>
+      <div id="canvasContainer">
+        <canvas id="graphCanvas"></canvas>
+      </div>
+    </div>
+
+    <script>
+      /****************************************
+       *  GLOBAL VARIABLES
+       ****************************************/
+      const canvas = document.getElementById("graphCanvas");
+      const ctx = canvas.getContext("2d");
+
+      let expressions = [];
+      let colorIndex = 0;
+      const colors = ["#8B0000", "blue", "black", "purple"];
+
+      let centerX = 0;
+      let centerY = 0;
+      let scale = 1;
+      let isDragging = false;
+      let dragStartX = 0;
+      let dragStartY = 0;
+      let hoverPoint = null;
+      let pinnedPoint = null;
+      let pinnedExpression = null;
+      let areaData = null;
+
+      const DEFAULT_XMIN = -10,
+        DEFAULT_XMAX = 10;
+      const DEFAULT_YMIN = -5,
+        DEFAULT_YMAX = 5;
+
+      /****************************************
+       *  DYNAMIC INPUT BARS
+       ****************************************/
+      const equationList = document.getElementById("equationList");
+
+      addEquationRow();
+      function addEquationRow() {
+        const input = document.createElement("input");
+        input.type = "text";
+        input.className = "equation-input";
+        input.placeholder = "Enter an equation (e.g. x^2 or x=2)...";
+
+        input.addEventListener("input", () => {
+          updateEquationRows();
+          parseAllInputs();
+          drawAll();
+        });
+
+        equationList.appendChild(input);
+      }
+
+      function updateEquationRows() {
+        let inputs = Array.from(equationList.querySelectorAll("input"));
+
+        for (let i = 0; i < inputs.length - 1; i++) {
+          if (!inputs[i].value.trim()) {
+            inputs[i].remove();
+          }
+        }
+        inputs = Array.from(equationList.querySelectorAll("input"));
+        const lastVal = inputs[inputs.length - 1].value.trim();
+        if (lastVal !== "") {
+          addEquationRow();
+          inputs = Array.from(equationList.querySelectorAll("input"));
+        }
+        while (inputs.length >= 2) {
+          const len = inputs.length;
+          const lastVal = inputs[len - 1].value.trim();
+          const secondLastVal = inputs[len - 2].value.trim();
+          if (lastVal === "" && secondLastVal === "") {
+            inputs[len - 1].remove();
+            inputs = Array.from(equationList.querySelectorAll("input"));
+          } else {
+            break;
+          }
+        }
+      }
+
+      /****************************************
+       *  INSERT SQRT BUTTON
+       ****************************************/
+      document.getElementById("sqrtBtn").addEventListener("click", insertSqrt);
+      function insertSqrt() {
+        let target = document.activeElement;
+        if (!target || target.tagName.toLowerCase() !== "input") {
+          const inputs = equationList.querySelectorAll("input");
+          if (inputs.length > 0) {
+            target = inputs[inputs.length - 1];
+          } else {
+            addEquationRow();
+            target = equationList.querySelector("input");
+          }
+        }
+
+        const insertText = "sqrt()";
+        const startPos = target.selectionStart;
+        const endPos = target.selectionEnd;
+        const oldVal = target.value;
+
+        target.value =
+          oldVal.slice(0, startPos) + insertText + oldVal.slice(endPos);
+
+        const newPos = startPos + 5;
+        target.selectionStart = newPos;
+        target.selectionEnd = newPos;
+        target.focus();
+
+        const evt = new Event("input");
+        target.dispatchEvent(evt);
+      }
+
+      /****************************************
+       *  PARSE INPUTS
+       ****************************************/
+      function parseAllInputs() {
+        // Clear arrays
+        expressions = [];
+        colorIndex = 0;
+
+        const inputs = equationList.querySelectorAll("input");
+        for (let i = 0; i < inputs.length; i++) {
+          const val = inputs[i].value.trim();
+          if (!val) continue;
+
+          if (isVerticalLine(val)) {
+            const xVal = parseVerticalLine(val);
+            if (xVal == null) continue;
+            const color = colors[colorIndex % colors.length];
+            colorIndex++;
+            expressions.push({ type: "vertical", xValue: xVal, color });
+          } else {
+            try {
+              const parsed = math.parse(val);
+              const color = colors[colorIndex % colors.length];
+              colorIndex++;
+              expressions.push({ type: "function", expression: parsed, color });
+            } catch {}
+          }
+        }
+      }
+
+      function isVerticalLine(str) {
+        const cleaned = str.replace(/\s+/g, "").toLowerCase();
+        return cleaned.startsWith("x=") && cleaned.length > 2;
+      }
+
+      function parseVerticalLine(str) {
+        const rightSide = str.split("=").slice(1).join("=");
+        try {
+          const val = math.parse(rightSide).evaluate({});
+          if (!Number.isFinite(val)) return null;
+          return val;
+        } catch {
+          return null;
+        }
+      }
+
+      /****************************************
+       *  HOME BUTTON
+       ****************************************/
+      document.getElementById("homeBtn").addEventListener("click", resetView);
+      function resetView() {
+        centerX = 0;
+        centerY = 0;
+        const scaleX = canvas.width / (DEFAULT_XMAX - DEFAULT_XMIN); // 20
+        const scaleY = canvas.height / (DEFAULT_YMAX - DEFAULT_YMIN); // 10
+        scale = Math.min(scaleX, scaleY);
+        hoverPoint = null;
+        pinnedPoint = null;
+        pinnedExpression = null;
+        areaData = null;
+
+        drawAll();
+      }
+
+      /****************************************
+       *  CANVAS EVENTS
+       ****************************************/
+      canvas.addEventListener("mousedown", (e) => {
+        isDragging = true;
+        canvas.style.cursor = "grabbing";
+        dragStartX = e.offsetX;
+        dragStartY = e.offsetY;
+      });
+
+      canvas.addEventListener("mouseup", () => {
+        isDragging = false;
+        canvas.style.cursor = "grab";
+      });
+
+      canvas.addEventListener("mousemove", (e) => {
+        if (isDragging) {
+          const dx = e.offsetX - dragStartX;
+          const dy = e.offsetY - dragStartY;
+          centerX -= dx / scale;
+          centerY += dy / scale;
+          dragStartX = e.offsetX;
+          dragStartY = e.offsetY;
+          drawAll();
+        } else {
+          hoverPoint = findClosestCurvePoint(e.offsetX, e.offsetY);
+          drawAll();
+        }
+      });
+
+      canvas.addEventListener("click", () => {
+        if (hoverPoint) {
+          if (pinnedExpression && pinnedExpression !== hoverPoint._exprRef) {
+            areaData = null;
+          }
+          pinnedPoint = { ...hoverPoint };
+          pinnedExpression = pinnedPoint._exprRef || null;
+        }
+        drawAll();
+      });
+
+      canvas.addEventListener("wheel", (e) => {
+        e.preventDefault();
+        const zoomFactor = 1.1;
+        if (e.deltaY < 0) {
+          scale *= zoomFactor;
+        } else {
+          scale /= zoomFactor;
+        }
+        drawAll();
+      });
+
+      /****************************************
+       *  FIND NEAREST CURVE POINT
+       ****************************************/
+      function findClosestCurvePoint(mouseX, mouseY) {
+        if (!expressions.length) return null;
+
+        let bestPoint = null;
+        let bestDist = Infinity;
+        const thresholdPx = 10;
+
+        for (const expr of expressions) {
+          if (expr.type === "vertical") {
+            const lineX = mathToScreenX(expr.xValue);
+            const dist = Math.abs(mouseX - lineX);
+            if (dist < thresholdPx && dist < bestDist) {
+              bestDist = dist;
+              const my = screenToMathY(mouseY);
+              bestPoint = {
+                type: "vertical",
+                x: expr.xValue,
+                y: my,
+                color: expr.color,
+                _exprRef: expr,
+              };
+            }
+          } else {
+            const mx = screenToMathX(mouseX);
+            let my;
+            try {
+              my = expr.expression.evaluate({ x: mx });
+              if (!Number.isFinite(my)) continue;
+            } catch {
+              continue;
+            }
+            const cy = mathToScreenY(my);
+            const dist = Math.abs(mouseY - cy);
+            if (dist < thresholdPx && dist < bestDist) {
+              bestDist = dist;
+              bestPoint = {
+                type: "function",
+                x: mx,
+                y: my,
+                color: expr.color,
+                _exprRef: expr,
+              };
+            }
+          }
+        }
+        return bestPoint;
+      }
+
+      /****************************************
+       *  AREA BUTTON EVENT
+       ****************************************/
+      document.getElementById("areaBtn").addEventListener("click", () => {
+        if (
+          pinnedPoint &&
+          pinnedPoint.type === "function" &&
+          pinnedExpression
+        ) {
+          const x1 = 0;
+          const x2 = pinnedPoint.x;
+          const fromX = Math.min(x1, x2);
+          const toX = Math.max(x1, x2);
+
+          const areaValue = numericIntegrate(
+            pinnedExpression.expression,
+            fromX,
+            toX,
+            2000
+          );
+
+          areaData = { fromX, toX, areaValue };
+          drawAll();
+        } else {
+          areaData = null;
+          alert("Pin a function point by clicking on it first.");
+        }
+      });
+
+      /****************************************************************
+       *  NUMERIC INTEGRATION OF A FUNCTION A TO B
+       ****************************************************************/
+      function numericIntegrate(expr, a, b, steps = 1000) {
+        if (a === b) return 0;
+        const h = (b - a) / steps;
+        let area = 0;
+        let x = a;
+        let prevY = safeEval(expr, x);
+        for (let i = 1; i <= steps; i++) {
+          x = a + i * h;
+          const y = safeEval(expr, x);
+          area += 0.5 * (prevY + y) * h;
+          prevY = y;
+        }
+        return area;
+      }
+
+      function safeEval(expr, xVal) {
+        try {
+          const val = expr.evaluate({ x: xVal });
+          return Number.isFinite(val) ? val : 0;
+        } catch {
+          return 0;
+        }
+      }
+
+      /****************************************
+       *  INITIALIZE & DRAW
+       ****************************************/
+      function resizeCanvas() {
+        canvas.width = canvas.clientWidth;
+        canvas.height = canvas.clientHeight;
+        drawAll();
+      }
+      window.addEventListener("load", () => {
+        resizeCanvas();
+        resetView();
+      });
+      window.addEventListener("resize", resizeCanvas);
+
+      function drawAll() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        drawGrid();
+        if (areaData && pinnedExpression) {
+          highlightAreaUnderCurve(
+            pinnedExpression.expression,
+            areaData.fromX,
+            areaData.toX
+          );
+        }
+
+        for (const expr of expressions) {
+          if (expr.type === "vertical") {
+            drawVerticalLine(expr.xValue, expr.color);
+          } else {
+            drawExpression(expr.expression, expr.color);
+          }
+        }
+
+        if (hoverPoint) {
+          drawPointLabel(hoverPoint, "#888", "#000");
+        }
+
+        if (pinnedPoint) {
+          const textColor = pinnedPoint.color || "green";
+          drawPointLabel(
+            pinnedPoint,
+            pinnedPoint.color || "green",
+            textColor,
+            areaData?.areaValue
+          );
+        }
+      }
+
+      /****************************************
+       *  DRAW: EXPRESSION / VERTICAL
+       ****************************************/
+      function drawExpression(parsed, color) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = color;
+
+        const step = 1 / scale;
+        const xMin = screenToMathX(0);
+        const xMax = screenToMathX(canvas.width);
+
+        let firstPoint = true;
+        for (let x = xMin; x <= xMax; x += step) {
+          let y;
+          try {
+            y = parsed.evaluate({ x });
+            if (!Number.isFinite(y)) continue;
+          } catch {
+            continue;
+          }
+          const cx = mathToScreenX(x);
+          const cy = mathToScreenY(y);
+          if (firstPoint) {
+            ctx.moveTo(cx, cy);
+            firstPoint = false;
+          } else {
+            ctx.lineTo(cx, cy);
+          }
+        }
+        ctx.stroke();
+        ctx.closePath();
+        ctx.restore();
+      }
+
+      function drawVerticalLine(xVal, color) {
+        ctx.save();
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2;
+        const xScreen = mathToScreenX(xVal);
+        ctx.beginPath();
+        ctx.moveTo(xScreen, 0);
+        ctx.lineTo(xScreen, canvas.height);
+        ctx.stroke();
+        ctx.closePath();
+        ctx.restore();
+      }
+
+      /****************************************
+       *  HIGHLIGHT AREA UNDER CURVE
+       ****************************************/
+      function highlightAreaUnderCurve(parsed, fromX, toX) {
+        const step = (toX - fromX) / 300;
+        if (!Number.isFinite(step) || step === 0) return;
+
+        const pattern = createStripePattern("#ffff66", 20, 4);
+
+        ctx.save();
+        ctx.beginPath();
+        ctx.moveTo(mathToScreenX(fromX), mathToScreenY(0));
+
+        for (let x = fromX; x <= toX; x += step) {
+          const fval = safeEval(parsed, x);
+          ctx.lineTo(mathToScreenX(x), mathToScreenY(fval));
+        }
+        ctx.lineTo(mathToScreenX(toX), mathToScreenY(0));
+        ctx.closePath();
+        ctx.fillStyle = pattern;
+        ctx.fill();
+        ctx.restore();
+      }
+
+      function createStripePattern(color = "yellow", size = 8, lineWidth = 2) {
+        const offscreen = document.createElement("canvas");
+        offscreen.width = size;
+        offscreen.height = size;
+        const octx = offscreen.getContext("2d");
+
+        octx.strokeStyle = color;
+        octx.lineWidth = lineWidth;
+        octx.beginPath();
+        octx.moveTo(0, 0);
+        octx.lineTo(size, size);
+        octx.stroke();
+
+        return ctx.createPattern(offscreen, "repeat");
+      }
+
+      /****************************************
+       *  DRAW GRID & AXES
+       ****************************************/
+      function drawGrid() {
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        const spacing = getGridSpacing(scale);
+        const left = screenToMathX(0);
+        const right = screenToMathX(canvas.width);
+        const top = screenToMathY(0);
+        const bottom = screenToMathY(canvas.height);
+
+        ctx.save();
+        ctx.beginPath();
+        ctx.strokeStyle = "#ccc";
+        ctx.lineWidth = 1;
+        const xStart = Math.floor(left / spacing) * spacing;
+        for (let x = xStart; x <= right; x += spacing) {
+          const cx = mathToScreenX(x);
+          ctx.moveTo(cx, 0);
+          ctx.lineTo(cx, canvas.height);
+        }
+        ctx.stroke();
+        ctx.closePath();
+        ctx.restore();
+
+        ctx.save();
+        ctx.beginPath();
+        ctx.strokeStyle = "#ccc";
+        ctx.lineWidth = 1;
+        const yStart = Math.floor(bottom / spacing) * spacing;
+        for (let y = yStart; y <= top; y += spacing) {
+          const cy = mathToScreenY(y);
+          ctx.moveTo(0, cy);
+          ctx.lineTo(canvas.width, cy);
+        }
+        ctx.stroke();
+        ctx.closePath();
+        ctx.restore();
+
+        // Axes
+        ctx.save();
+        ctx.strokeStyle = "#000";
+        ctx.lineWidth = 2;
+
+        if (left < 0 && right > 0) {
+          const yAxisX = mathToScreenX(0);
+          ctx.beginPath();
+          ctx.moveTo(yAxisX, 0);
+          ctx.lineTo(yAxisX, canvas.height);
+          ctx.stroke();
+          ctx.closePath();
+        }
+
+        if (bottom < 0 && top > 0) {
+          const xAxisY = mathToScreenY(0);
+          ctx.beginPath();
+          ctx.moveTo(0, xAxisY);
+          ctx.lineTo(canvas.width, xAxisY);
+          ctx.stroke();
+          ctx.closePath();
+        }
+        ctx.restore();
+
+        drawAxisLabels(spacing);
+      }
+
+      /****************************************
+       *  LABELS
+       ****************************************/
+      function drawAxisLabels(spacing) {
+        const left = screenToMathX(0);
+        const right = screenToMathX(canvas.width);
+        const top = screenToMathY(0);
+        const bottom = screenToMathY(canvas.height);
+
+        ctx.save();
+        ctx.fillStyle = "#000";
+        ctx.font = "12px Arial";
+
+        const xStart = Math.floor(left / spacing) * spacing;
+        for (let x = xStart; x <= right; x += spacing) {
+          if (Math.abs(x) < 1e-9) continue;
+          const cx = mathToScreenX(x);
+          const cy0 = mathToScreenY(0);
+          if (bottom < 0 && top > 0) {
+            ctx.fillText(String(Math.round(x)), cx + 2, cy0 - 2);
+          }
+        }
+
+        const yStart = Math.floor(bottom / spacing) * spacing;
+        for (let y = yStart; y <= top; y += spacing) {
+          if (Math.abs(y) < 1e-9) continue;
+          const cy = mathToScreenY(y);
+          const cx0 = mathToScreenX(0);
+          if (left < 0 && right > 0) {
+            ctx.fillText(String(Math.round(y)), cx0 + 4, cy - 2);
+          }
+        }
+
+        if (left < 0 && right > 0 && bottom < 0 && top > 0) {
+          const originX = mathToScreenX(0);
+          const originY = mathToScreenY(0);
+          ctx.fillText("0", originX + 4, originY - 2);
+        }
+        ctx.restore();
+      }
+
+      /****************************************
+       *  POINT LABEL
+       ****************************************/
+      function drawPointLabel(pt, dotColor, textColor, areaValue) {
+        ctx.save();
+        // Draw the circle
+        const cx = mathToScreenX(pt.x);
+        const cy = mathToScreenY(pt.y);
+
+        ctx.fillStyle = dotColor;
+        ctx.beginPath();
+        ctx.arc(cx, cy, 4, 0, 2 * Math.PI);
+        ctx.fill();
+        ctx.closePath();
+
+        ctx.fillStyle = textColor;
+        ctx.font = "13px Arial";
+        let label = "";
+        if (pt.type === "vertical") {
+          label = `x=${pt.x.toFixed(2)}`;
+        } else {
+          label = `(${pt.x.toFixed(2)}, ${pt.y.toFixed(2)})`;
+          if (areaValue !== undefined) {
+            label += `, A=${areaValue.toFixed(3)}`;
+          }
+        }
+        ctx.fillText(label, cx + 6, cy - 6);
+        ctx.restore();
+      }
+
+      /****************************************
+       *  GRID SPACING
+       ****************************************/
+      function getGridSpacing(scale) {
+        const desiredPx = 80;
+        const intervals = [1, 2, 5, 10, 20, 50, 100, 200, 500];
+        let best = intervals[0];
+        let minDiff = Infinity;
+        for (let interval of intervals) {
+          const px = interval * scale;
+          const diff = Math.abs(px - desiredPx);
+          if (diff < minDiff) {
+            minDiff = diff;
+            best = interval;
+          }
+        }
+        return best;
+      }
+
+      /****************************************
+       *  COORD TRANSFORMS
+       ****************************************/
+      function screenToMathX(px) {
+        const centerPixelX = canvas.width / 2;
+        return (px - centerPixelX) / scale + centerX;
+      }
+      function screenToMathY(py) {
+        const centerPixelY = canvas.height / 2;
+        return -(py - centerPixelY) / scale + centerY;
+      }
+      function mathToScreenX(x) {
+        const centerPixelX = canvas.width / 2;
+        return (x - centerX) * scale + centerPixelX;
+      }
+      function mathToScreenY(y) {
+        const centerPixelY = canvas.height / 2;
+        return (-y + centerY) * scale + centerPixelY;
+      }
+    </script>
+  </body>
+</html>
