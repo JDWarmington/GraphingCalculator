@@ -60,7 +60,6 @@
         font-size: 16px;
         padding: 10px 0;
       }
-
       #canvasContainer {
         flex: 1;
         position: relative;
@@ -84,7 +83,10 @@
       <div id="leftPanel">
         <button id="homeBtn">&#8962; Home</button>
         <h4>Graph Equations</h4>
-        <p style="font-size: 0.9em; margin-top: 0">Insert an Equation</p>
+        <p style="font-size: 0.9em; margin-top: 0">
+          Type an expression (e.g. <code>x^2</code>, <code>sin(x)</code>, or
+          <code>x=2</code>). The graph updates in real time.
+        </p>
         <div id="equationList"></div>
         <button id="sqrtBtn">Insert √</button>
         <button id="areaBtn">f'(x)</button>
@@ -100,11 +102,9 @@
        ****************************************/
       const canvas = document.getElementById("graphCanvas");
       const ctx = canvas.getContext("2d");
-
       let expressions = [];
       let colorIndex = 0;
       const colors = ["#8B0000", "blue", "black", "purple"];
-
       let centerX = 0;
       let centerY = 0;
       let scale = 1;
@@ -114,8 +114,12 @@
       let hoverPoint = null;
       let pinnedPoint = null;
       let pinnedExpression = null;
+
       let areaData = null;
 
+      /****************************************
+       *  CONSTANTS
+       ****************************************/
       const DEFAULT_XMIN = -10,
         DEFAULT_XMAX = 10;
       const DEFAULT_YMIN = -5,
@@ -144,7 +148,6 @@
 
       function updateEquationRows() {
         let inputs = Array.from(equationList.querySelectorAll("input"));
-
         for (let i = 0; i < inputs.length - 1; i++) {
           if (!inputs[i].value.trim()) {
             inputs[i].remove();
@@ -203,10 +206,9 @@
       }
 
       /****************************************
-       *  PARSE INPUTS
+       *  PARSE INPUTS (REAL-TIME)
        ****************************************/
       function parseAllInputs() {
-        // Clear arrays
         expressions = [];
         colorIndex = 0;
 
@@ -214,7 +216,6 @@
         for (let i = 0; i < inputs.length; i++) {
           const val = inputs[i].value.trim();
           if (!val) continue;
-
           if (isVerticalLine(val)) {
             const xVal = parseVerticalLine(val);
             if (xVal == null) continue;
@@ -255,8 +256,8 @@
       function resetView() {
         centerX = 0;
         centerY = 0;
-        const scaleX = canvas.width / (DEFAULT_XMAX - DEFAULT_XMIN); // 20
-        const scaleY = canvas.height / (DEFAULT_YMAX - DEFAULT_YMIN); // 10
+        const scaleX = canvas.width / (DEFAULT_XMAX - DEFAULT_XMIN);
+        const scaleY = canvas.height / (DEFAULT_YMAX - DEFAULT_YMIN);
         scale = Math.min(scaleX, scaleY);
         hoverPoint = null;
         pinnedPoint = null;
@@ -323,11 +324,9 @@
        ****************************************/
       function findClosestCurvePoint(mouseX, mouseY) {
         if (!expressions.length) return null;
-
         let bestPoint = null;
         let bestDist = Infinity;
         const thresholdPx = 10;
-
         for (const expr of expressions) {
           if (expr.type === "vertical") {
             const lineX = mathToScreenX(expr.xValue);
@@ -382,14 +381,12 @@
           const x2 = pinnedPoint.x;
           const fromX = Math.min(x1, x2);
           const toX = Math.max(x1, x2);
-
           const areaValue = numericIntegrate(
             pinnedExpression.expression,
             fromX,
             toX,
             2000
           );
-
           areaData = { fromX, toX, areaValue };
           drawAll();
         } else {
@@ -399,7 +396,8 @@
       });
 
       /****************************************************************
-       *  NUMERIC INTEGRATION OF A FUNCTION A TO B
+       * NUMERIC INTEGRATION (TRAPEZOIDAL RULE)
+       * Evaluate the expression at many points & sum up the areas of trapezoids
        ****************************************************************/
       function numericIntegrate(expr, a, b, steps = 1000) {
         if (a === b) return 0;
@@ -415,7 +413,6 @@
         }
         return area;
       }
-
       function safeEval(expr, xVal) {
         try {
           const val = expr.evaluate({ x: xVal });
@@ -449,7 +446,6 @@
             areaData.toX
           );
         }
-
         for (const expr of expressions) {
           if (expr.type === "vertical") {
             drawVerticalLine(expr.xValue, expr.color);
@@ -457,11 +453,9 @@
             drawExpression(expr.expression, expr.color);
           }
         }
-
         if (hoverPoint) {
           drawPointLabel(hoverPoint, "#888", "#000");
         }
-
         if (pinnedPoint) {
           const textColor = pinnedPoint.color || "green";
           drawPointLabel(
@@ -528,13 +522,11 @@
       function highlightAreaUnderCurve(parsed, fromX, toX) {
         const step = (toX - fromX) / 300;
         if (!Number.isFinite(step) || step === 0) return;
-
         const pattern = createStripePattern("#ffff66", 20, 4);
 
         ctx.save();
         ctx.beginPath();
         ctx.moveTo(mathToScreenX(fromX), mathToScreenY(0));
-
         for (let x = fromX; x <= toX; x += step) {
           const fval = safeEval(parsed, x);
           ctx.lineTo(mathToScreenX(x), mathToScreenY(fval));
@@ -546,12 +538,14 @@
         ctx.restore();
       }
 
+      /************************************************************
+       * Creates a small offscreen canvas with diagonal stripes
+       ************************************************************/
       function createStripePattern(color = "yellow", size = 8, lineWidth = 2) {
         const offscreen = document.createElement("canvas");
         offscreen.width = size;
         offscreen.height = size;
         const octx = offscreen.getContext("2d");
-
         octx.strokeStyle = color;
         octx.lineWidth = lineWidth;
         octx.beginPath();
@@ -603,11 +597,9 @@
         ctx.closePath();
         ctx.restore();
 
-        // Axes
         ctx.save();
         ctx.strokeStyle = "#000";
         ctx.lineWidth = 2;
-
         if (left < 0 && right > 0) {
           const yAxisX = mathToScreenX(0);
           ctx.beginPath();
@@ -616,7 +608,6 @@
           ctx.stroke();
           ctx.closePath();
         }
-
         if (bottom < 0 && top > 0) {
           const xAxisY = mathToScreenY(0);
           ctx.beginPath();
@@ -631,14 +622,13 @@
       }
 
       /****************************************
-       *  LABELS
+       *  LABELS ON AXES
        ****************************************/
       function drawAxisLabels(spacing) {
         const left = screenToMathX(0);
         const right = screenToMathX(canvas.width);
         const top = screenToMathY(0);
         const bottom = screenToMathY(canvas.height);
-
         ctx.save();
         ctx.fillStyle = "#000";
         ctx.font = "12px Arial";
@@ -652,7 +642,6 @@
             ctx.fillText(String(Math.round(x)), cx + 2, cy0 - 2);
           }
         }
-
         const yStart = Math.floor(bottom / spacing) * spacing;
         for (let y = yStart; y <= top; y += spacing) {
           if (Math.abs(y) < 1e-9) continue;
@@ -662,7 +651,6 @@
             ctx.fillText(String(Math.round(y)), cx0 + 4, cy - 2);
           }
         }
-
         if (left < 0 && right > 0 && bottom < 0 && top > 0) {
           const originX = mathToScreenX(0);
           const originY = mathToScreenY(0);
@@ -672,11 +660,10 @@
       }
 
       /****************************************
-       *  POINT LABEL
+       *  POINT LABEL (HOVER / PINNED)
        ****************************************/
       function drawPointLabel(pt, dotColor, textColor, areaValue) {
         ctx.save();
-        // Draw the circle
         const cx = mathToScreenX(pt.x);
         const cy = mathToScreenY(pt.y);
 
